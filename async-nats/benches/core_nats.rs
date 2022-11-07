@@ -1,5 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use futures::stream::StreamExt;
+use std::time::{Duration, Instant};
 
 pub fn publish(c: &mut Criterion) {
     let server = nats_server::run_basic_server();
@@ -19,9 +20,9 @@ pub fn publish(c: &mut Criterion) {
                     rt.block_on(async { async_nats::connect(server.client_url()).await.unwrap() });
                 let msg = &bmsg[0..*size];
 
-                b.to_async(rt).iter(move || {
+                b.to_async(rt).iter_custom(move |n| {
                     let nc = nc.clone();
-                    async move { publish_messages(nc, msg, 100).await }
+                    async move { publish_messages(nc, msg, n).await }
                 });
             },
         );
@@ -48,9 +49,9 @@ pub fn publish(c: &mut Criterion) {
                 });
                 let msg = &bmsg[0..*size];
 
-                b.to_async(rt).iter(move || {
+                b.to_async(rt).iter_custom(move |n| {
                     let nc = nc.clone();
-                    async move { publish_messages(nc, msg, 100).await }
+                    async move { publish_messages(nc, msg, n).await }
                 });
             },
         );
@@ -93,16 +94,17 @@ pub fn subscribe(c: &mut Criterion) {
                     nc
                 });
 
-                b.to_async(rt).iter(move || {
+                b.to_async(rt).iter_custom(move |n| {
                     let nc = nc.clone();
-                    async move { subscribe_messages(nc, 100).await }
+                    async move { subscribe_messages(nc, n).await }
                 });
             },
         );
     }
     subscribe_amount_group.finish();
 }
-async fn publish_messages(nc: async_nats::Client, msg: &'_ [u8], amount: usize) {
+async fn publish_messages(nc: async_nats::Client, msg: &'_ [u8], amount: u64) -> Duration {
+    let start = Instant::now();
     let msg = msg.to_vec();
     for _i in 0..amount {
         nc.publish("bench".into(), msg.clone().into())
@@ -110,13 +112,17 @@ async fn publish_messages(nc: async_nats::Client, msg: &'_ [u8], amount: usize) 
             .unwrap();
     }
     nc.flush().await.unwrap();
+    start.elapsed()
 }
 
-async fn subscribe_messages(nc: async_nats::Client, amount: usize) {
+async fn subscribe_messages(nc: async_nats::Client, amount: u64) -> Duration {
+    let start = Instant::now();
     let mut sub = nc.subscribe("bench".into()).await.unwrap();
+    nc.flush().await.unwrap();
     for _ in 0..amount {
         sub.next().await.unwrap();
     }
+    start.elapsed()
 }
 
 criterion_group!(benches, publish, subscribe);
